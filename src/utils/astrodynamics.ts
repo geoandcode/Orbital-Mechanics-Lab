@@ -9,7 +9,7 @@ export const PRESETS: Record<string, OrbitPreset> = {
   'SENTINEL-1': {
     id: 'SENTINEL-1',
     name: 'SENTINEL-1',
-    badge: 'Sentinel-1 (ESA Frozen SSO)',
+    badge: '🇪🇺 Sentinel-1 (ESA Frozen SSO)',
     description: 'European Radar Observatory: Sun-synchronous dawn-dusk frozen orbit at 693 km altitude with a 12-day repeat cycle, C-band SAR imaging payload.',
     agency: 'ESA / Copernicus',
     sensorType: 'C-Band Synthetic Aperture Radar (SAR)',
@@ -30,7 +30,7 @@ export const PRESETS: Record<string, OrbitPreset> = {
   'COSMO-SKYMED': {
     id: 'COSMO-SKYMED',
     name: 'COSMO-SKYMED',
-    badge: 'COSMO-SkyMed (ASI Orbit Lowering)',
+    badge: '🇮🇹 COSMO-SkyMed (ASI Orbit Lowering)',
     description: 'Italian X-band SAR constellation: Originally operating in 622.5 km orbit, lowered in 2025 to ~574 km for constellation coordination and phased retirement.',
     agency: 'ASI (Italian Space Agency) / MoD',
     sensorType: 'X-Band Synthetic Aperture Radar (SAR)',

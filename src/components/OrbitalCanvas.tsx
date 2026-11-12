@@ -90,20 +90,63 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   const nodeLineRef = useRef<THREE.Line | null>(null);
   const perigeeVectorRef = useRef<THREE.Line | null>(null);
   const arcMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
-  const satGlowMatRef = useRef<THREE.MeshBasicMaterial | null>(null);
 
-  // Procedural Satellite 3D Group (chassis + solar panels + SAR radar antenna)
-  const buildSatelliteMesh = () => {
+
+  // Procedural Satellite 3D Group (chassis + solar panels + SAR radar antenna + 3D Flag Sprite)
+  const buildSatelliteMesh = (presetId: string) => {
     const satGroup = new THREE.Group();
 
-    // 1. Satellite Central Bus Chassis (Gold Kapton thermal insulation finish)
+    // 1. Satellite Central Bus Chassis (Gold Kapton thermal insulation with draped national flag)
     const busGeo = new THREE.BoxGeometry(0.35, 0.45, 0.35);
-    const busMat = new THREE.MeshStandardMaterial({
+    const goldMat = new THREE.MeshStandardMaterial({
       color: 0xdfab32, // Gold foil
       roughness: 0.25,
       metalness: 0.85,
     });
-    const busMesh = new THREE.Mesh(busGeo, busMat);
+
+    // Create flag canvas texture for chassis draping
+    const flagCanvas = document.createElement('canvas');
+    flagCanvas.width = 128;
+    flagCanvas.height = 128;
+    const fCtx = flagCanvas.getContext('2d');
+    if (fCtx) {
+      if (presetId === 'COSMO-SKYMED') {
+        // Italian Flag: Vertical Tricolor (Green, White, Red)
+        fCtx.fillStyle = '#009246'; // Green
+        fCtx.fillRect(0, 0, 42.6, 128);
+        fCtx.fillStyle = '#ffffff'; // White
+        fCtx.fillRect(42.6, 0, 42.6, 128);
+        fCtx.fillStyle = '#ce2b37'; // Red
+        fCtx.fillRect(85.2, 0, 42.8, 128);
+      } else if (presetId === 'SENTINEL-1') {
+        // European Union Flag: Blue field with gold stars circle
+        fCtx.fillStyle = '#003399';
+        fCtx.fillRect(0, 0, 128, 128);
+        fCtx.fillStyle = '#ffcc00';
+        for (let i = 0; i < 12; i++) {
+          const angle = (i / 12) * Math.PI * 2;
+          const sx = 64 + 34 * Math.cos(angle);
+          const sy = 64 + 34 * Math.sin(angle);
+          fCtx.beginPath();
+          fCtx.arc(sx, sy, 4.5, 0, Math.PI * 2);
+          fCtx.fill();
+        }
+      } else {
+        fCtx.fillStyle = '#1e293b';
+        fCtx.fillRect(0, 0, 128, 128);
+      }
+    }
+    const flagTexture = new THREE.CanvasTexture(flagCanvas);
+    flagTexture.colorSpace = THREE.SRGBColorSpace;
+    const flagMat = new THREE.MeshStandardMaterial({
+      map: flagTexture,
+      roughness: 0.3,
+      metalness: 0.1,
+    });
+
+    // BoxGeometry materials array: [Right, Left, Top, Bottom, Front, Back] - drape flag on all faces of satellite box chassis
+    const busMaterials = [flagMat, flagMat, flagMat, flagMat, flagMat, flagMat];
+    const busMesh = new THREE.Mesh(busGeo, busMaterials);
     satGroup.add(busMesh);
 
     // 2. Nadir-facing instrument sensor head (silver/chrome lens)
@@ -157,16 +200,6 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     rightBoom.rotation.z = Math.PI / 2;
     rightBoom.position.set(0.24, 0, 0);
     satGroup.add(rightBoom);
-
-    // 5. Outer Soft Beacon Glow Sphere
-    const haloMat = new THREE.MeshBasicMaterial({
-      color: 0x38efef,
-      transparent: true,
-      opacity: 0.4,
-    });
-    satGlowMatRef.current = haloMat;
-    const haloMesh = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), haloMat);
-    satGroup.add(haloMesh);
 
     return satGroup;
   };
@@ -238,13 +271,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
       perigeeVectorRef.current.geometry.attributes.position.needsUpdate = true;
     }
 
-    // 4. Update Colors
-    if (arcMaterialRef.current) {
-      arcMaterialRef.current.color.set(orbitColorRef.current);
-    }
-    if (satGlowMatRef.current) {
-      satGlowMatRef.current.color.set(orbitColorRef.current);
-    }
+
   }, []);
 
   // Update satellite position and trailing arc along trajectory at true anomaly nu
@@ -305,6 +332,17 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   useEffect(() => {
     applyCameraPreset(cameraPreset);
   }, [cameraPreset, applyCameraPreset]);
+
+  // Rebuild satellite mesh when activePresetId changes so the 3D flag sprite matches
+  useEffect(() => {
+    if (!sceneRef.current || !satMeshRef.current) return;
+    sceneRef.current.remove(satMeshRef.current);
+    const newSat = buildSatelliteMesh(activePresetId);
+    newSat.position.copy(satMeshRef.current.position);
+    newSat.quaternion.copy(satMeshRef.current.quaternion);
+    satMeshRef.current = newSat;
+    sceneRef.current.add(newSat);
+  }, [activePresetId]);
 
   // Synchronize when elements or colors change from outside
   useEffect(() => {
@@ -540,7 +578,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     scene.add(orbitArc);
 
     // Procedural Satellite Group
-    const sat = buildSatelliteMesh();
+    const sat = buildSatelliteMesh(activePresetId);
     satMeshRef.current = sat;
     scene.add(sat);
 
@@ -574,8 +612,8 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
 
       // 2. High-speed, responsive satellite propagation
       if (isAnimatingRef.current) {
-        // Base step is 2.2 deg/frame (yielding brisk ~2.7s period at 1x)
-        const baseSpeed = 2.2;
+        // Base step is 1.0 deg/frame (slower, smooth speed)
+        const baseSpeed = 1.0;
         const deltaNu = baseSpeed * animSpeedMultiplierRef.current;
         currentNuRef.current = (currentNuRef.current - deltaNu + 360) % 360;
 
@@ -607,6 +645,14 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     };
   }, []); // Run ONCE on mount!
 
+  const getFlagLabel = (id: string) => {
+    if (id === 'SENTINEL-1') return '🇪🇺 Sentinel-1 (ESA)';
+    if (id === 'COSMO-SKYMED') return '🇮🇹 COSMO-SkyMed (ASI)';
+    if (id === 'ISS') return '🌍 ISS (LEO)';
+    if (id === 'MOLNIYA') return '🛰️ Molniya (HEO)';
+    return id;
+  };
+
   return (
     <div className="relative w-full h-full overflow-hidden select-none" ref={mountRef}>
       {/* 2D Satellite Tracking HUD Label */}
@@ -619,7 +665,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
         >
           <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#38efef]" />
           <span className="text-[11px] font-mono font-bold tracking-wider text-cyan-200 bg-slate-900/85 px-2.5 py-0.5 rounded border border-cyan-500/40 shadow-lg">
-            {hudLabel.text}
+            {getFlagLabel(hudLabel.text)}
           </span>
         </div>
       )}
