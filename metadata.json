@@ -1,0 +1,6 @@
+{
+  "name": "Stefan Ackermann's Orbital Mechanics Lab",
+  "description": "Interactive 3D orbital mechanics laboratory simulating Keplerian orbital elements, satellite ephemerides for Sentinel-1 and COSMO-SkyMed, and real-time telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

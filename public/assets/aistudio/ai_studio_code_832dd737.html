@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stefan Ackermann's Orbital Mechanics Lab (SAOML)</title>
+  
+  <!-- Proven, bulletproof Three.js r128 + OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <style>
+    :root {
+      --bg-space: #070814;
+      --bg-panel: #0d1024;
+      --bg-card: #131735;
+      --border-card: rgba(85, 105, 180, 0.28);
+      --border-card-active: rgba(110, 150, 255, 0.6);
+      --accent-cyan: #38efef;
+      --accent-purple: #5856d6;
+      --accent-cosmo: #ff9d00;
+      --text-white: #ffffff;
+      --text-dim: #9aa5cb;
+      --slider-track: #262c55;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+
+    body {
+      background-color: var(--bg-space);
+      color: var(--text-white);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* LEFT VIEWPORT CONTAINER */
+    #viewport-container {
+      flex: 1;
+      height: 100%;
+      position: relative;
+      background: radial-gradient(circle at 45% 50%, #151940 0%, #0a0c20 60%, #050610 100%);
+    }
+
+    #three-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* VIEWPORT OVERLAYS */
+    .lab-watermark {
+      position: absolute;
+      top: 20px;
+      left: 24px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .lab-watermark span.badge {
+      background: rgba(56, 239, 239, 0.15);
+      border: 1px solid var(--accent-cyan);
+      color: var(--accent-cyan);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+    }
+
+    .bottom-hint {
+      position: absolute;
+      bottom: 24px;
+      left: 28px;
+      font-size: 0.72rem;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(160, 180, 230, 0.75);
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    .bottom-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+    }
+
+    .btn-action {
+      background: #474cb8;
+      border: 1px solid rgba(130, 140, 255, 0.5);
+      color: #fff;
+      padding: 9px 20px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px rgba(71, 76, 184, 0.4);
+    }
+    .btn-action:hover {
+      background: #595ee4;
+      transform: translateY(-1px);
+    }
+
+    /* RIGHT CONTROL SIDEBAR */
+    #sidebar {
+      width: 440px;
+      height: 100%;
+      background: linear-gradient(180deg, #0e122b 0%, #090b1c 100%);
+      border-left: 1px solid var(--border-card);
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      z-index: 20;
+    }
+
+    /* TOP PRESET TABS */
+    .regime-tabs {
+      display: flex;
+      gap: 6px;
+      background: rgba(19, 23, 53, 0.8);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border-card);
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 8px 4px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .tab-btn.active {
+      background: #5154c6;
+      border-color: rgba(140, 160, 255, 0.6);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(81, 84, 198, 0.5);
+    }
+
+    /* SLIDERS */
+    .slider-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: #c0c8e4;
+      font-weight: 500;
+    }
+
+    .slider-val {
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      font-weight: 700;
+      color: #ffffff;
+      font-size: 0.88rem;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      background: var(--slider-track);
+      border-radius: 2px;
+      outline: none;
+      margin: 6px 0;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #eef2ff;
+      border: 2px solid #5b60e6;
+      box-shadow: 0 0 6px rgba(91, 96, 230, 0.8);
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* 2x2 TELEMETRY CARDS */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 4px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .metric-lbl {
+      font-size: 0.68rem;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .metric-num {
+      font-size: 1.35rem;
+      font-weight: 700;
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+    }
+
+    /* FORMULA FOOTER CARD */
+    .formula-card {
+      background: rgba(19, 23, 53, 0.6);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      font-family: "Cambria Math", "Times New Roman", serif;
+      font-size: 0.95rem;
+      color: #dbe4ff;
+      letter-spacing: 0.5px;
+      margin-top: auto;
+    }
+
+    /* SATELLITE HUD LABEL */
+    #sat-label {
+      position: absolute;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      color: #ffffff;
+      text-shadow: 0 0 8px rgba(56, 239, 239, 0.9);
+      pointer-events: none;
+      transform: translate(16px, -12px);
+      display: none;
+      font-family: "SF Mono", Monaco, monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LEFT VIEWPORT -->
+  <div id="viewport-container">
+    <div class="lab-watermark">
+      <span>Stefan Ackermann's Orbital Mechanics Lab</span>
+      <span class="badge" id="mode-badge">LEO SAR Constellation</span>
+    </div>
+
+    <canvas id="three-canvas"></canvas>
+    <div id="sat-label">SATELLITE</div>
+
+    <div class="bottom-hint">
+      Drag to rotate · Scroll to zoom · Orbit scale compressed for teaching
+    </div>
+
+    <div class="bottom-controls">
+      <button class="btn-action" id="btn-animate" onclick="toggleAnimation()">
+        <span id="anim-icon">▶</span> <span id="anim-text">Animate</span>
+      </button>
+      <button class="btn-action" style="background:#282e58;" onclick="resetOrbit()">
+        ↺ Reset
+      </button>
+    </div>
+  </div>
+
+  <!-- RIGHT CONTROL SIDEBAR -->
+  <div id="sidebar">
+    <!-- REGIME BUTTONS (Sentinel-1 and COSMO-SkyMed directly integrated) -->
+    <div class="regime-tabs">
+      <button class="tab-btn active" id="tab-s1" onclick="selectPreset('SENTINEL-1')">SENTINEL-1</button>
+      <button class="tab-btn" id="tab-csk" onclick="selectPreset('COSMO-SKYMED')">COSMO-SKYMED</button>
+      <button class="tab-btn" id="tab-meo" onclick="selectPreset('MEO')">MEO</button>
+      <button class="tab-btn" id="tab-geo" onclick="selectPreset('GEO')">GEO</button>
+    </div>
+
+    <!-- TIMELINE SLIDER (Historical ephemeris scrubber) -->
+    <div class="slider-row" style="background: rgba(38,44,85,0.4); padding: 8px 12px; border-radius: 8px;">
+      <div class="slider-header">
+        <span style="color:var(--accent-cyan); font-weight:700;">Mission Epoch Scrubber</span>
+        <span class="slider-val" id="val-epoch" style="font-size:0.75rem;">2024-05-13</span>
+      </div>
+      <input type="range" id="sl-epoch" min="0" max="100" value="0" oninput="onEpochScrub(this.value)">
+    </div>
+
+    <!-- 6 KEPLERIAN ELEMENTS SLIDERS -->
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>Semi-major axis (a)</span>
+        <span class="slider-val" id="val-a">6,881km</span>
+      </div>
+      <input type="range" id="sl-a" min="6500" max="42164" value="7073" oninput="onElementChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>Eccentricity (e)</span>
+        <span class="slider-val" id="val-e">0.0004</span>
+      </div>
+      <input type="range" id="sl-e" min="0" max="0.75" step="0.0001" value="0.00014" oninput="onElementChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>Inclination (i)</span>
+        <span class="slider-val" id="val-i">98°</span>
+      </div>
+      <input type="range" id="sl-i" min="0" max="180" value="98" oninput="onElementChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>RAAN (&Omega;)</span>
+        <span class="slider-val" id="val-raan">68°</span>
+      </div>
+      <input type="range" id="sl-raan" min="0" max="360" value="141" oninput="onElementChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>Arg. of perigee (&omega;)</span>
+        <span class="slider-val" id="val-aop">54°</span>
+      </div>
+      <input type="range" id="sl-aop" min="0" max="360" value="90" oninput="onElementChange()">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-header">
+        <span>True anomaly (&nu;)</span>
+        <span class="slider-val" id="val-nu">306°</span>
+      </div>
+      <input type="range" id="sl-nu" min="0" max="360" value="0" oninput="onElementChange()">
+    </div>
+
+    <!-- METRIC STAT CARDS -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <span class="metric-lbl">Period</span>
+        <span class="metric-num" id="card-period">1.58 h</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-lbl">Perigee Altitude</span>
+        <span class="metric-num" id="card-rp">500 km</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-lbl">Apogee Altitude</span>
+        <span class="metric-num" id="card-ra">506 km</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-lbl">Speed at Perigee</span>
+        <span class="metric-num" id="card-vp">7.61 km/s</span>
+      </div>
+    </div>
+
+    <!-- MATHEMATICAL FORMULA FOOTER -->
+    <div class="formula-card">
+      T = 2&pi; &radic;(a&sup3; / &mu;) &nbsp;&middot;&nbsp; r = a(1 &minus; e cos E)
+    </div>
+  </div>
+
+  <script>
+    /* ====================================================================
+       1. ASTRODYNAMICS CONSTANTS & PRESETS
+       ==================================================================== */
+    const R_EARTH = 6378.137;   // km
+    const MU = 398600.4418;     // km^3 / s^2
+
+    // Real constellation ephemeris benchmarks extracted from the files
+    const PRESETS = {
+      'SENTINEL-1': {
+        a: 6378 + 695.75, // 7073.8 km
+        e: 0.000138,
+        i: 98.18,
+        raan: 141.78,
+        aop: 89.97,
+        nu: 45,
+        badge: "Sentinel-1 (ESA Frozen SSO)",
+        altStart: 695.75,
+        altEnd: 695.76,
+        raanStart: 141.78,
+        raanRate: 0.9856
+      },
+      'COSMO-SKYMED': {
+        a: 6378 + 622.52, // 7000.6 km (Drops in 2025 to ~574.1 km)
+        e: 0.000160,
+        i: 97.89,
+        raan: 317.82,
+        aop: 89.23,
+        nu: 210,
+        badge: "COSMO-SkyMed (ASI Orbit Lowering)",
+        altStart: 622.52,
+        altEnd: 574.15,
+        raanStart: 317.82,
+        raanRate: 0.9856
+      },
+      'MEO': {
+        a: 26560,
+        e: 0.001,
+        i: 55.0,
+        raan: 45.0,
+        aop: 0.0,
+        nu: 120,
+        badge: "Galileo / GPS Constellation"
+      },
+      'GEO': {
+        a: 42164,
+        e: 0.0001,
+        i: 0.05,
+        raan: 0.0,
+        aop: 0.0,
+        nu: 0,
+        badge: "Geostationary Belt"
+      }
+    };
+
+    let activePreset = 'SENTINEL-1';
+    let isAnimating = false;
+    let animSpeed = 1.0;
+
+    /* ====================================================================
+       2. PROCEDURAL TEXTURE GENERATION FOR GUARANTEED OFFLINE 3D GLOBE
+       ==================================================================== */
+    function createProceduralEarthTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2048;
+      canvas.height = 1024;
+      const ctx = canvas.getContext('2d');
+
+      // Ocean Base
+      const oceanGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      oceanGrad.addColorStop(0, '#0a1638');
+      oceanGrad.addColorStop(0.5, '#0d1e4c');
+      oceanGrad.addColorStop(1, '#0a1638');
+      ctx.fillStyle = oceanGrad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Lat / Long Grid Lines
+      ctx.strokeStyle = 'rgba(75, 120, 220, 0.28)';
+      ctx.lineWidth = 1.5;
+      for (let lat = -80; lat <= 80; lat += 20) {
+        let y = ((90 - lat) / 180) * canvas.height;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+      for (let lon = -180; lon <= 180; lon += 30) {
+        let x = ((lon + 180) / 360) * canvas.width;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+
+      // Draw stylized illuminated landmasses (Europe, Africa, Americas, Asia, Oceania)
+      ctx.fillStyle = 'rgba(25, 45, 95, 0.9)';
+      ctx.strokeStyle = 'rgba(90, 160, 255, 0.85)';
+      ctx.lineWidth = 2.0;
+
+      function drawLand(pts) {
+        ctx.beginPath();
+        pts.forEach(([lon, lat], i) => {
+          let x = ((lon + 180) / 360) * canvas.width;
+          let y = ((90 - lat) / 180) * canvas.height;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Africa
+      drawLand([[-17,35], [30,32], [51,12], [42,-12], [28,-34], [18,-34], [10,5], [-17,15], [-17,35]]);
+      // Europe
+      drawLand([[-9,36], [2,50], [10,54], [25,71], [40,65], [35,40], [-5,36]]);
+      // Asia
+      drawLand([[35,40], [60,60], [100,75], [170,66], [140,35], [105,10], [75,10], [55,25], [35,40]]);
+      // North America
+      drawLand([[-165,65], [-95,72], [-55,50], [-75,25], [-105,20], [-120,38], [-165,65]]);
+      // South America
+      drawLand([[-80,10], [-35,-5], [-40,-22], [-55,-54], [-75,-48], [-80,-2], [-80,10]]);
+      // Australia
+      drawLand([[115,-22], [150,-12], [152,-38], [115,-34], [115,-22]]);
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    /* ====================================================================
+       3. THREE.JS 3D SCENE & ORBIT INITIALIZATION
+       ==================================================================== */
+    let scene, camera, renderer, controls;
+    let globeMesh, atmosphereMesh, zAxisLine;
+    let orbitLineMesh, orbitArcMesh, satMesh, equatorialRing;
+    const EARTH_SCALE_R = 4.0; // Graphic radius of Earth
+
+    function init3D() {
+      const container = document.getElementById('viewport-container');
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 1000);
+      camera.position.set(13, 7, 14);
+
+      renderer = new THREE.WebGLRenderer({
+        canvas: document.getElementById('three-canvas'),
+        antialias: true,
+        alpha: true
+      });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.minDistance = 6;
+      controls.maxDistance = 50;
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0x7080b0, 1.3);
+      scene.add(ambientLight);
+
+      const sunLight = new THREE.DirectionalLight(0xffffff, 1.8);
+      sunLight.position.set(20, 12, 15);
+      scene.add(sunLight);
+
+      // Starfield background particles
+      const starGeo = new THREE.BufferGeometry();
+      const starCount = 800;
+      const starPos = new Float32Array(starCount * 3);
+      for(let i=0; i<starCount*3; i+=3) {
+        starPos[i] = (Math.random() - 0.5) * 160;
+        starPos[i+1] = (Math.random() - 0.5) * 160;
+        starPos[i+2] = (Math.random() - 0.5) * 160;
+      }
+      starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+      const starMat = new THREE.PointsMaterial({ color: 0x8899cc, size: 0.6, transparent: true, opacity: 0.6 });
+      scene.add(new THREE.Points(starGeo, starMat));
+
+      // Earth Globe
+      const earthTex = createProceduralEarthTexture();
+      const earthGeo = new THREE.SphereGeometry(EARTH_SCALE_R, 64, 64);
+      const earthMat = new THREE.MeshPhongMaterial({
+        map: earthTex,
+        specular: 0x223366,
+        shininess: 15
+      });
+      globeMesh = new THREE.Mesh(earthGeo, earthMat);
+      scene.add(globeMesh);
+
+      // Atmospheric Glow Layer
+      const atmoGeo = new THREE.SphereGeometry(EARTH_SCALE_R * 1.025, 48, 48);
+      const atmoMat = new THREE.MeshBasicMaterial({
+        color: 0x4da6ff,
+        transparent: true,
+        opacity: 0.12,
+        side: THREE.BackSide
+      });
+      atmosphereMesh = new THREE.Mesh(atmoGeo, atmoMat);
+      scene.add(atmosphereMesh);
+
+      // Dashed Z-Axis (Rotational Axis)
+      const zPts = [new THREE.Vector3(0, -6.8, 0), new THREE.Vector3(0, 6.8, 0)];
+      const zGeo = new THREE.BufferGeometry().setFromPoints(zPts);
+      const zMat = new THREE.LineDashedMaterial({
+        color: 0x7e8cb8,
+        dashSize: 0.25,
+        gapSize: 0.18,
+        linewidth: 1
+      });
+      zAxisLine = new THREE.Line(zGeo, zMat);
+      zAxisLine.computeLineDistances();
+      scene.add(zAxisLine);
+
+      // "Z" Label Sprite at Top of Axis
+      const zLabelCanvas = document.createElement('canvas');
+      zLabelCanvas.width = 64; zLabelCanvas.height = 64;
+      const zCtx = zLabelCanvas.getContext('2d');
+      zCtx.fillStyle = '#9aa5cb';
+      zCtx.font = 'bold 36px monospace';
+      zCtx.textAlign = 'center';
+      zCtx.fillText('Z', 32, 42);
+      const zTex = new THREE.CanvasTexture(zLabelCanvas);
+      const zSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: zTex }));
+      zSprite.position.set(0, 7.3, 0);
+      zSprite.scale.set(0.9, 0.9, 1);
+      scene.add(zSprite);
+
+      // Equatorial Ring Reference
+      const eqPts = [];
+      const eqR = EARTH_SCALE_R * 1.6;
+      for(let i=0; i<=128; i++) {
+        let th = (i / 128) * Math.PI * 2;
+        eqPts.push(new THREE.Vector3(eqR * Math.cos(th), 0, eqR * Math.sin(th)));
+      }
+      const eqGeo = new THREE.BufferGeometry().setFromPoints(eqPts);
+      equatorialRing = new THREE.Line(eqGeo, new THREE.LineBasicMaterial({
+        color: 0x3d4b7c,
+        transparent: true,
+        opacity: 0.55
+      }));
+      scene.add(equatorialRing);
+
+      // Orbit Full Loop Mesh (Faint cyan)
+      const orbGeom = new THREE.BufferGeometry();
+      orbGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(256 * 3), 3));
+      orbitLineMesh = new THREE.LineLoop(orbGeom, new THREE.LineBasicMaterial({
+        color: 0x1f7c8f,
+        transparent: true,
+        opacity: 0.45
+      }));
+      scene.add(orbitLineMesh);
+
+      // Active Arc Mesh (Bright glowing turquoise curve leading to sat)
+      const arcGeom = new THREE.BufferGeometry();
+      arcGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 3), 3));
+      orbitArcMesh = new THREE.Line(arcGeom, new THREE.LineBasicMaterial({
+        color: 0x4eedf5,
+        linewidth: 3.5,
+        transparent: true,
+        opacity: 0.95
+      }));
+      scene.add(orbitArcMesh);
+
+      // Satellite Sphere + Outer Glow Ring
+      const satGroup = new THREE.Group();
+      const satCore = new THREE.Mesh(
+        new THREE.SphereGeometry(0.24, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      const satHalo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.38, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0x38efef, transparent: true, opacity: 0.35 })
+      );
+      satGroup.add(satCore);
+      satGroup.add(satHalo);
+      satMesh = satGroup;
+      scene.add(satMesh);
+
+      window.addEventListener('resize', onResize);
+      renderLoop();
+    }
+
+    function onResize() {
+      const container = document.getElementById('viewport-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    /* ====================================================================
+       4. ORBITAL MECHANICS MATH & 3D PROJECTION
+       ==================================================================== */
+    function getScaledRadius(a_km) {
+      // Teaching compression curve: LEO (~7000km) sits at ~1.12x Earth radius
+      const alt = a_km - R_EARTH;
+      const scaledAlt = Math.pow(Math.max(10, alt), 0.72) * 0.015;
+      return EARTH_SCALE_R + Math.max(0.4, scaledAlt);
+    }
+
+    function computeOrbitState() {
+      const a = parseFloat(document.getElementById('sl-a').value);
+      const e = parseFloat(document.getElementById('sl-e').value);
+      const inc = THREE.MathUtils.degToRad(parseFloat(document.getElementById('sl-i').value));
+      const raan = THREE.MathUtils.degToRad(parseFloat(document.getElementById('sl-raan').value));
+      const aop = THREE.MathUtils.degToRad(parseFloat(document.getElementById('sl-aop').value));
+      const nu = THREE.MathUtils.degToRad(parseFloat(document.getElementById('sl-nu').value));
+
+      // 1. Orbital position in perifocal coordinate frame
+      function getPosAtTrueAnomaly(theta) {
+        const r_km = (a * (1 - e * e)) / (1 + e * Math.cos(theta));
+        const r_norm = getScaledRadius(r_km);
+
+        // Perifocal coordinates (P, Q, W)
+        const x_orb = r_norm * Math.cos(theta);
+        const y_orb = r_norm * Math.sin(theta);
+
+        // Rotate by Argument of Perigee
+        const x_p = x_orb * Math.cos(aop) - y_orb * Math.sin(aop);
+        const y_p = x_orb * Math.sin(aop) + y_orb * Math.cos(aop);
+
+        // Rotate into ECI frame (Y is polar in Three.js, Z is out-of-plane)
+        const x = x_p * Math.cos(raan) - y_p * Math.cos(inc) * Math.sin(raan);
+        const z = -(x_p * Math.sin(raan) + y_p * Math.cos(inc) * Math.cos(raan));
+        const y = y_p * Math.sin(inc);
+
+        return { x, y, z };
+      }
+
+      // Update full orbit ellipse loop
+      const fullPos = orbitLineMesh.geometry.attributes.position.array;
+      for (let j = 0; j < 256; j++) {
+        const th = (j / 256) * Math.PI * 2;
+        const p = getPosAtTrueAnomaly(th);
+        fullPos[j * 3] = p.x;
+        fullPos[j * 3 + 1] = p.y;
+        fullPos[j * 3 + 2] = p.z;
+      }
+      orbitLineMesh.geometry.attributes.position.needsUpdate = true;
+
+      // Update glowing active arc trailing the satellite (~90 degrees behind)
+      const arcPos = orbitArcMesh.geometry.attributes.position.array;
+      const arcSpan = Math.PI * 0.75;
+      for (let j = 0; j < 64; j++) {
+        const th = nu - arcSpan * (1 - j / 63);
+        const p = getPosAtTrueAnomaly(th);
+        arcPos[j * 3] = p.x;
+        arcPos[j * 3 + 1] = p.y;
+        arcPos[j * 3 + 2] = p.z;
+      }
+      orbitArcMesh.geometry.attributes.position.needsUpdate = true;
+
+      // Position satellite
+      const satPos = getPosAtTrueAnomaly(nu);
+      satMesh.position.set(satPos.x, satPos.y, satPos.z);
+
+      // Update Screen HUD 2D Label tracking the satellite
+      const screenPos = satMesh.position.clone().project(camera);
+      const container = document.getElementById('viewport-container');
+      const sx = ((screenPos.x + 1) / 2) * container.clientWidth;
+      const sy = ((-screenPos.y + 1) / 2) * container.clientHeight;
+      const satLabel = document.getElementById('sat-label');
+      if (screenPos.z < 1.0) {
+        satLabel.style.display = 'block';
+        satLabel.style.left = `${sx}px`;
+        satLabel.style.top = `${sy}px`;
+        satLabel.innerText = activePreset;
+      } else {
+        satLabel.style.display = 'none';
+      }
+
+      // 2. Physics & Metric Calculations
+      const periodSec = 2 * Math.PI * Math.sqrt(Math.pow(a, 3) / MU);
+      const periodHours = periodSec / 3600;
+
+      const r_perigee = a * (1 - e) - R_EARTH;
+      const r_apogee = a * (1 + e) - R_EARTH;
+
+      const v_perigee = Math.sqrt(MU * ( (2 / (a * (1 - e))) - (1 / a) ));
+
+      // Update numerical indicators
+      document.getElementById('card-period').innerText = `${periodHours.toFixed(2)} h`;
+      document.getElementById('card-rp').innerText = `${Math.round(r_perigee)} km`;
+      document.getElementById('card-ra').innerText = `${Math.round(r_apogee)} km`;
+      document.getElementById('card-vp').innerText = `${v_perigee.toFixed(2)} km/s`;
+
+      // Slider readout labels
+      document.getElementById('val-a').innerText = `${Math.round(a).toLocaleString()}km`;
+      document.getElementById('val-e').innerText = e.toFixed(4);
+      document.getElementById('val-i').innerText = `${Math.round(THREE.MathUtils.radToDeg(inc))}°`;
+      document.getElementById('val-raan').innerText = `${Math.round(THREE.MathUtils.radToDeg(raan))}°`;
+      document.getElementById('val-aop').innerText = `${Math.round(THREE.MathUtils.radToDeg(aop))}°`;
+      document.getElementById('val-nu').innerText = `${Math.round(THREE.MathUtils.radToDeg(nu))}°`;
+    }
+
+    /* ====================================================================
+       5. PRESETS & TIMELINE SCRUBBING
+       ==================================================================== */
+    function selectPreset(presetKey) {
+      activePreset = presetKey;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      if (presetKey === 'SENTINEL-1') document.getElementById('tab-s1').classList.add('active');
+      else if (presetKey === 'COSMO-SKYMED') document.getElementById('tab-csk').classList.add('active');
+      else if (presetKey === 'MEO') document.getElementById('tab-meo').classList.add('active');
+      else if (presetKey === 'GEO') document.getElementById('tab-geo').classList.add('active');
+
+      const p = PRESETS[presetKey];
+      document.getElementById('sl-a').value = p.a;
+      document.getElementById('sl-e').value = p.e;
+      document.getElementById('sl-i').value = p.i;
+      document.getElementById('sl-raan').value = p.raan;
+      document.getElementById('sl-aop').value = p.aop;
+      document.getElementById('sl-nu').value = p.nu;
+      document.getElementById('mode-badge').innerText = p.badge;
+
+      // Color scheme customization per constellation
+      if (presetKey === 'COSMO-SKYMED') {
+        orbitArcMesh.material.color.setHex(0xffaa22);
+      } else {
+        orbitArcMesh.material.color.setHex(0x38efef);
+      }
+
+      computeOrbitState();
+    }
+
+    function onElementChange() {
+      computeOrbitState();
+    }
+
+    // Historical scrubber: translates time progress to exact RAAN precession & altitude step-down
+    function onEpochScrub(val) {
+      const pct = val / 100;
+      const totalDays = 912; // May 2024 to Nov 2026
+      const currentDays = pct * totalDays;
+      const d = new Date("2024-05-13T00:00:00Z");
+      d.setDate(d.getDate() + currentDays);
+      document.getElementById('val-epoch').innerText = d.toISOString().substring(0, 10);
+
+      const p = PRESETS[activePreset];
+      if (p && p.raanRate) {
+        // Precess RAAN with J2 rate
+        const raan = (p.raanStart + currentDays * p.raanRate) % 360;
+        document.getElementById('sl-raan').value = Math.round(raan);
+
+        // If COSMO-SkyMed, lower orbit during spring 2025 (day 335 to 400)
+        if (activePreset === 'COSMO-SKYMED') {
+          let alt = p.altStart;
+          if (currentDays > 330 && currentDays < 400) {
+            alt = p.altStart - ((currentDays - 330) / 70) * (p.altStart - p.altEnd);
+          } else if (currentDays >= 400) {
+            alt = p.altEnd;
+          }
+          document.getElementById('sl-a').value = Math.round(R_EARTH + alt);
+        }
+        computeOrbitState();
+      }
+    }
+
+    function toggleAnimation() {
+      isAnimating = !isAnimating;
+      document.getElementById('anim-icon').innerText = isAnimating ? "⏸" : "▶";
+      document.getElementById('anim-text').innerText = isAnimating ? "Pause" : "Animate";
+    }
+
+    function resetOrbit() {
+      selectPreset(activePreset);
+      controls.reset();
+      camera.position.set(13, 7, 14);
+    }
+
+    /* ====================================================================
+       6. MAIN ANIMATION LOOP
+       ==================================================================== */
+    function renderLoop() {
+      requestAnimationFrame(renderLoop);
+
+      // Rotate Earth slowly on its axis
+      if (globeMesh) globeMesh.rotation.y += 0.0006;
+
+      // Animate satellite along trajectory
+      if (isAnimating) {
+        let nuSlider = document.getElementById('sl-nu');
+        let currentNu = parseFloat(nuSlider.value);
+        let nextNu = (currentNu + 0.65) % 360;
+        nuSlider.value = nextNu;
+        computeOrbitState();
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Startup initialization
+    window.addEventListener('DOMContentLoaded', () => {
+      init3D();
+      selectPreset('SENTINEL-1');
+    });
+  </script>
+</body>
+</html>
