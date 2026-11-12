@@ -38,14 +38,14 @@ export const PRESETS: Record<string, OrbitPreset> = {
       a: 6378.137 + 622.52, // ~7000.6 km
       e: 0.000160,
       i: 97.89,
-      raan: 317.82,
+      raan: 141.78,
       aop: 89.23,
-      nu: 210,
+      nu: 45,
     },
     color: '#ff9d00',
     altStart: 622.52,
     altEnd: 574.15,
-    raanStart: 317.82,
+    raanStart: 141.78,
     raanRate: 0.9856,
   },
 

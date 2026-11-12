@@ -577,7 +577,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
         // Base step is 2.2 deg/frame (yielding brisk ~2.7s period at 1x)
         const baseSpeed = 2.2;
         const deltaNu = baseSpeed * animSpeedMultiplierRef.current;
-        currentNuRef.current = (currentNuRef.current + deltaNu) % 360;
+        currentNuRef.current = (currentNuRef.current - deltaNu + 360) % 360;
 
         // Update 3D satellite position and arc directly on the GPU
         updateSatelliteAndArc(currentNuRef.current);
