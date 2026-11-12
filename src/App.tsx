@@ -17,6 +17,10 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [cameraPreset, setCameraPreset] = useState<'isometric' | 'polar' | 'equatorial' | 'chase'>('isometric');
 
+  // Earth Rotation & Animation Speed Multiplier
+  const [isEarthSpinning, setIsEarthSpinning] = useState<boolean>(true);
+  const [animSpeedMultiplier, setAnimSpeedMultiplier] = useState<number>(1);
+
   // Astrodynamic Frame Visual Layers
   const [showEquator, setShowEquator] = useState<boolean>(true);
   const [showPolarAxis, setShowPolarAxis] = useState<boolean>(true);
@@ -122,6 +126,8 @@ export default function App() {
           showNodeLine={showNodeLine}
           showPerigeeVector={showPerigeeVector}
           cameraPreset={cameraPreset}
+          isEarthSpinning={isEarthSpinning}
+          animSpeedMultiplier={animSpeedMultiplier}
         />
 
         {/* Bottom Floating Control Bar */}
@@ -131,6 +137,10 @@ export default function App() {
           onResetOrbit={handleResetOrbit}
           cameraPreset={cameraPreset}
           onSetCameraPreset={setCameraPreset}
+          isEarthSpinning={isEarthSpinning}
+          onToggleEarthSpin={() => setIsEarthSpinning((prev) => !prev)}
+          animSpeedMultiplier={animSpeedMultiplier}
+          onSetAnimSpeedMultiplier={setAnimSpeedMultiplier}
         />
       </main>
 

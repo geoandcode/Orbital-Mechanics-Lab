@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { KeplerianElements } from '../types/orbit';
-import { keplerianToCartesian, R_EARTH } from '../utils/astrodynamics';
+import { keplerianToCartesian } from '../utils/astrodynamics';
+import { createRealEarthTexture, createDrapedCoastlineMesh } from '../utils/earthBoundaries';
 
 interface OrbitalCanvasProps {
   elements: KeplerianElements;
@@ -15,6 +16,8 @@ interface OrbitalCanvasProps {
   showNodeLine: boolean;
   showPerigeeVector: boolean;
   cameraPreset: 'isometric' | 'polar' | 'equatorial' | 'chase';
+  isEarthSpinning: boolean;
+  animSpeedMultiplier: number;
 }
 
 const EARTH_GRAPHIC_R = 4.0;
@@ -30,8 +33,12 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   showNodeLine,
   showPerigeeVector,
   cameraPreset,
+  isEarthSpinning,
+  animSpeedMultiplier,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+
+  // Stable refs for values used inside animation loop
   const onNuChangeRef = useRef(onNuChange);
   onNuChangeRef.current = onNuChange;
 
@@ -41,8 +48,25 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   const isAnimatingRef = useRef(isAnimating);
   isAnimatingRef.current = isAnimating;
 
+  const isEarthSpinningRef = useRef(isEarthSpinning);
+  isEarthSpinningRef.current = isEarthSpinning;
+
+  const animSpeedMultiplierRef = useRef(animSpeedMultiplier);
+  animSpeedMultiplierRef.current = animSpeedMultiplier;
+
   const orbitColorRef = useRef(orbitColor);
   orbitColorRef.current = orbitColor;
+
+  // Internal true anomaly tracker for silky smooth 60 FPS animation
+  const currentNuRef = useRef(elements.nu);
+
+  // Synchronize internal true anomaly when externally changed (e.g. slider dragged or preset selected)
+  useEffect(() => {
+    // Only sync if difference is significant to avoid fighting active animation loop
+    if (Math.abs(currentNuRef.current - elements.nu) > 1.0 && !isAnimatingRef.current) {
+      currentNuRef.current = elements.nu;
+    }
+  }, [elements.nu]);
 
   // HUD 2D label coordinates
   const [hudLabel, setHudLabel] = useState<{ x: number; y: number; visible: boolean; text: string }>({
@@ -57,7 +81,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const globeMeshRef = useRef<THREE.Mesh | null>(null);
+  const globeGroupRef = useRef<THREE.Group | null>(null);
   const satMeshRef = useRef<THREE.Group | null>(null);
   const orbitLineMeshRef = useRef<THREE.LineLoop | null>(null);
   const orbitArcMeshRef = useRef<THREE.Line | null>(null);
@@ -68,116 +92,11 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   const arcMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
   const satGlowMatRef = useRef<THREE.MeshBasicMaterial | null>(null);
 
-  // Procedural Earth Texture
-  const createProceduralEarthTexture = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 2048;
-    canvas.height = 1024;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return new THREE.Texture();
-
-    // Ocean Base Gradient
-    const oceanGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    oceanGrad.addColorStop(0, '#060e22');
-    oceanGrad.addColorStop(0.2, '#091536');
-    oceanGrad.addColorStop(0.5, '#0b1a44');
-    oceanGrad.addColorStop(0.8, '#091536');
-    oceanGrad.addColorStop(1, '#060e22');
-    ctx.fillStyle = oceanGrad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Subtle ocean currents & bathymetry rings
-    ctx.fillStyle = 'rgba(20, 45, 95, 0.45)';
-    ctx.beginPath();
-    ctx.ellipse(500, 500, 350, 180, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(1500, 520, 320, 160, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Lat / Long Coordinate Grid
-    ctx.strokeStyle = 'rgba(65, 105, 210, 0.22)';
-    ctx.lineWidth = 1.0;
-    for (let lat = -80; lat <= 80; lat += 20) {
-      const y = ((90 - lat) / 180) * canvas.height;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
-    for (let lon = -180; lon <= 180; lon += 30) {
-      const x = ((lon + 180) / 360) * canvas.width;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-
-    // Highlighted Equator line
-    ctx.strokeStyle = 'rgba(56, 239, 239, 0.4)';
-    ctx.lineWidth = 2.0;
-    ctx.beginPath();
-    ctx.moveTo(0, canvas.height / 2);
-    ctx.lineTo(canvas.width, canvas.height / 2);
-    ctx.stroke();
-
-    // Stylized high-visibility landmasses
-    ctx.fillStyle = 'rgba(25, 48, 105, 0.94)';
-    ctx.strokeStyle = 'rgba(92, 168, 255, 0.9)';
-    ctx.lineWidth = 2.2;
-
-    const drawLand = (pts: [number, number][]) => {
-      ctx.beginPath();
-      pts.forEach(([lon, lat], i) => {
-        const x = ((lon + 180) / 360) * canvas.width;
-        const y = ((90 - lat) / 180) * canvas.height;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    };
-
-    // Africa & Madagascar
-    drawLand([[-17, 35], [-5, 36], [10, 37], [30, 32], [51, 12], [42, -12], [35, -24], [28, -34], [18, -34], [12, -18], [10, 5], [-17, 15], [-17, 35]]);
-    drawLand([[44, -12], [50, -15], [47, -25], [43, -24], [44, -12]]);
-
-    // Europe & Mediterranean
-    drawLand([[-9, 36], [-9, 43], [0, 49], [2, 51], [10, 55], [25, 71], [32, 69], [40, 65], [38, 45], [30, 42], [20, 38], [5, 36], [-5, 36], [-9, 36]]);
-    // British Isles
-    drawLand([[-6, 50], [1, 52], [0, 58], [-5, 58], [-6, 50]]);
-
-    // Asia & India
-    drawLand([[35, 40], [45, 50], [60, 60], [80, 72], [100, 75], [130, 73], [170, 66], [165, 55], [140, 35], [120, 30], [108, 12], [92, 22], [80, 8], [72, 20], [60, 25], [55, 25], [35, 40]]);
-    // Japan
-    drawLand([[130, 32], [140, 36], [142, 44], [139, 42], [130, 32]]);
-
-    // North America
-    drawLand([[-165, 65], [-140, 70], [-95, 72], [-75, 60], [-55, 50], [-65, 42], [-75, 25], [-82, 25], [-97, 26], [-105, 20], [-115, 30], [-124, 38], [-124, 48], [-165, 65]]);
-    // Greenland
-    drawLand([[-50, 60], [-20, 70], [-25, 82], [-55, 82], [-50, 60]]);
-
-    // South America
-    drawLand([[-80, 10], [-60, 10], [-35, -5], [-35, -12], [-40, -22], [-55, -54], [-68, -54], [-75, -48], [-72, -30], [-80, -2], [-80, 10]]);
-
-    // Australia & New Zealand
-    drawLand([[115, -22], [130, -14], [145, -11], [150, -18], [152, -38], [138, -36], [115, -34], [115, -22]]);
-    drawLand([[168, -36], [178, -38], [172, -45], [168, -36]]);
-
-    // Antarctica fringe
-    drawLand([[-180, -78], [180, -78], [180, -88], [-180, -88], [-180, -78]]);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
-  };
-
-  // Build a realistic procedural Satellite Group (3D bus + solar panels + SAR radar antenna)
-  const createProceduralSatellite = () => {
+  // Procedural Satellite 3D Group (chassis + solar panels + SAR radar antenna)
+  const buildSatelliteMesh = () => {
     const satGroup = new THREE.Group();
 
-    // 1. Satellite Central Bus Chassis (Gold Kapton insulation finish)
+    // 1. Satellite Central Bus Chassis (Gold Kapton thermal insulation finish)
     const busGeo = new THREE.BoxGeometry(0.35, 0.45, 0.35);
     const busMat = new THREE.MeshStandardMaterial({
       color: 0xdfab32, // Gold foil
@@ -199,7 +118,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     lensMesh.position.set(0, 0, 0.22);
     satGroup.add(lensMesh);
 
-    // 3. Synthetic Aperture Radar (SAR) Antenna Planar Array (Long radar boom representing Sentinel-1 / COSMO-SkyMed)
+    // 3. Synthetic Aperture Radar (SAR) Antenna Planar Array
     const sarAntennaGeo = new THREE.BoxGeometry(0.12, 0.95, 0.04);
     const sarMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -275,9 +194,9 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     controls.update();
   }, []);
 
-  // Update Orbit lines and satellite position
+  // Update Orbit Ellipse Geometry and Node vectors (called when Keplerian elements change)
   const updateOrbitalGeometry = useCallback(() => {
-    if (!orbitLineMeshRef.current || !orbitArcMeshRef.current || !satMeshRef.current) return;
+    if (!orbitLineMeshRef.current || !satMeshRef.current) return;
     const elem = elementsRef.current;
 
     // 1. Update Full Orbit Ellipse
@@ -292,28 +211,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     }
     orbitLineMeshRef.current.geometry.attributes.position.needsUpdate = true;
 
-    // 2. Update Active Glowing Arc (trailing behind satellite)
-    const arcPositions = orbitArcMeshRef.current.geometry.attributes.position.array as Float32Array;
-    const arcSegments = 64;
-    const nuRad = (elem.nu * Math.PI) / 180;
-    const arcSpan = Math.PI * 0.75; // 135 deg trail
-    for (let j = 0; j < arcSegments; j++) {
-      const theta = nuRad - arcSpan * (1 - j / (arcSegments - 1));
-      const pt = keplerianToCartesian(elem, theta, EARTH_GRAPHIC_R);
-      arcPositions[j * 3] = pt.x;
-      arcPositions[j * 3 + 1] = pt.y;
-      arcPositions[j * 3 + 2] = pt.z;
-    }
-    orbitArcMeshRef.current.geometry.attributes.position.needsUpdate = true;
-
-    // 3. Update Satellite Mesh Transform & Nadir orientation
-    const currentPt = keplerianToCartesian(elem, nuRad, EARTH_GRAPHIC_R);
-    satMeshRef.current.position.set(currentPt.x, currentPt.y, currentPt.z);
-
-    // Orient satellite so instrument points down towards Earth center (0,0,0)
-    satMeshRef.current.lookAt(0, 0, 0);
-
-    // 4. Update Ascending Node Vector (RAAN vector in equatorial plane)
+    // 2. Update Ascending Node Vector (RAAN vector in equatorial plane)
     if (nodeLineRef.current) {
       const raanRad = (elem.raan * Math.PI) / 180;
       const nodeLength = EARTH_GRAPHIC_R * 2.1;
@@ -327,7 +225,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
       nodeLineRef.current.geometry.attributes.position.needsUpdate = true;
     }
 
-    // 5. Update Perigee Vector (pointing towards perigee)
+    // 3. Update Perigee Vector (pointing towards perigee)
     if (perigeeVectorRef.current) {
       const perigeePt = keplerianToCartesian(elem, 0, EARTH_GRAPHIC_R);
       const periPositions = perigeeVectorRef.current.geometry.attributes.position.array as Float32Array;
@@ -340,15 +238,52 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
       perigeeVectorRef.current.geometry.attributes.position.needsUpdate = true;
     }
 
-    // 6. Update Color
+    // 4. Update Colors
     if (arcMaterialRef.current) {
       arcMaterialRef.current.color.set(orbitColorRef.current);
     }
     if (satGlowMatRef.current) {
       satGlowMatRef.current.color.set(orbitColorRef.current);
     }
+  }, []);
 
-    // 7. Calculate 2D Screen Space HUD tracking coordinates
+  // Update satellite position and trailing arc along trajectory at true anomaly nu
+  const updateSatelliteAndArc = useCallback((nuDeg: number) => {
+    if (!satMeshRef.current || !orbitArcMeshRef.current) return;
+    const elem = elementsRef.current;
+    const nuRad = (nuDeg * Math.PI) / 180;
+
+    // 1. Satellite Mesh Transform & Real LVLH Flight Attitude (Zero polar gimbal flip)
+    const currentPt = keplerianToCartesian(elem, nuRad, EARTH_GRAPHIC_R);
+    satMeshRef.current.position.set(currentPt.x, currentPt.y, currentPt.z);
+
+    // Calculate forward orbital velocity vector by sampling tangent at nu + delta
+    const nextPt = keplerianToCartesian(elem, nuRad + 0.002, EARTH_GRAPHIC_R);
+    const fwdVec = new THREE.Vector3(nextPt.x - currentPt.x, nextPt.y - currentPt.y, nextPt.z - currentPt.z).normalize();
+    const nadirVec = new THREE.Vector3(-currentPt.x, -currentPt.y, -currentPt.z).normalize();
+    
+    // Orbital angular momentum vector (perpendicular to orbit plane)
+    const normalVec = new THREE.Vector3().crossVectors(fwdVec, nadirVec).normalize();
+    const trueNadir = new THREE.Vector3().crossVectors(normalVec, fwdVec).normalize();
+
+    // Orthonormal basis: X = solar panel cross-axis, Y = velocity vector, Z = Nadir SAR antenna
+    const rotMatrix = new THREE.Matrix4().makeBasis(normalVec, fwdVec, trueNadir);
+    satMeshRef.current.quaternion.setFromRotationMatrix(rotMatrix);
+
+    // 2. Active Glowing Arc (trailing behind satellite ~135 degrees)
+    const arcPositions = orbitArcMeshRef.current.geometry.attributes.position.array as Float32Array;
+    const arcSegments = 64;
+    const arcSpan = Math.PI * 0.75;
+    for (let j = 0; j < arcSegments; j++) {
+      const theta = nuRad - arcSpan * (1 - j / (arcSegments - 1));
+      const pt = keplerianToCartesian(elem, theta, EARTH_GRAPHIC_R);
+      arcPositions[j * 3] = pt.x;
+      arcPositions[j * 3 + 1] = pt.y;
+      arcPositions[j * 3 + 2] = pt.z;
+    }
+    orbitArcMeshRef.current.geometry.attributes.position.needsUpdate = true;
+
+    // 3. Update 2D Screen Space Tracking HUD Label
     if (cameraRef.current && mountRef.current) {
       const satVec = satMeshRef.current.position.clone();
       satVec.project(cameraRef.current);
@@ -357,12 +292,10 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
       const screenX = ((satVec.x + 1) / 2) * width;
       const screenY = ((-satVec.y + 1) / 2) * height;
 
-      // Only display if satellite is in front of camera plane
-      const isVisible = satVec.z < 1.0;
       setHudLabel({
         x: screenX,
         y: screenY,
-        visible: isVisible,
+        visible: satVec.z < 1.0,
         text: activePresetId,
       });
     }
@@ -376,7 +309,8 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
   // Synchronize when elements or colors change from outside
   useEffect(() => {
     updateOrbitalGeometry();
-  }, [elements, orbitColor, updateOrbitalGeometry]);
+    updateSatelliteAndArc(elements.nu);
+  }, [elements, orbitColor, updateOrbitalGeometry, updateSatelliteAndArc]);
 
   // Visibility toggles
   useEffect(() => {
@@ -386,12 +320,12 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     if (perigeeVectorRef.current) perigeeVectorRef.current.visible = showPerigeeVector;
   }, [showEquator, showPolarAxis, showNodeLine, showPerigeeVector]);
 
-  // Initialize Three.js scene once
+  // Initialize Three.js scene ONCE on component mount
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
-    // Detect software WebGL as instructed by skill
+    // Software WebGL detection guard
     const isSoftwareGl = (() => {
       const gl = document.createElement('canvas').getContext('webgl2');
       if (!gl) return true;
@@ -426,7 +360,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.2;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -434,30 +368,30 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minDistance = 5.5;
+    controls.minDistance = 5.2;
     controls.maxDistance = 65;
     controlsRef.current = controls;
 
-    // Ambient and Directional Lights
-    const ambientLight = new THREE.AmbientLight(0x7588b8, 1.4);
+    // Studio Lights
+    const ambientLight = new THREE.AmbientLight(0x8294c4, 1.4);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 2.2);
     sunLight.position.set(25, 14, 18);
     scene.add(sunLight);
 
-    const fillLight = new THREE.DirectionalLight(0x4060aa, 0.8);
+    const fillLight = new THREE.DirectionalLight(0x4060aa, 0.9);
     fillLight.position.set(-20, -10, -15);
     scene.add(fillLight);
 
     // Procedural Starfield
     const starGeo = new THREE.BufferGeometry();
-    const starCount = 1200;
+    const starCount = 1400;
     const starPositions = new Float32Array(starCount * 3);
     for (let i = 0; i < starCount * 3; i += 3) {
-      starPositions[i] = (Math.random() - 0.5) * 220;
-      starPositions[i + 1] = (Math.random() - 0.5) * 220;
-      starPositions[i + 2] = (Math.random() - 0.5) * 220;
+      starPositions[i] = (Math.random() - 0.5) * 240;
+      starPositions[i + 1] = (Math.random() - 0.5) * 240;
+      starPositions[i + 2] = (Math.random() - 0.5) * 240;
     }
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     const starMat = new THREE.PointsMaterial({
@@ -468,31 +402,45 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     });
     scene.add(new THREE.Points(starGeo, starMat));
 
-    // Earth Globe
-    const earthTexture = createProceduralEarthTexture();
+    // =========================================================================
+    // ROTATING EARTH GROUP: Globe + Draped Natural Earth Shapefile Boundaries
+    // =========================================================================
+    const globeGroup = new THREE.Group();
+    globeGroup.name = 'rotatingEarthGroup';
+    globeGroupRef.current = globeGroup;
+    scene.add(globeGroup);
+
+    // 1. Earth textured sphere with Natural Earth shapefile land & ocean map
+    const earthTexture = createRealEarthTexture();
     earthTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const earthGeo = new THREE.SphereGeometry(EARTH_GRAPHIC_R, 64, 64);
     const earthMat = new THREE.MeshPhongMaterial({
       map: earthTexture,
-      specular: 0x243b6b,
-      shininess: 22,
+      specular: 0x284277,
+      shininess: 24,
     });
-    const globe = new THREE.Mesh(earthGeo, earthMat);
-    globeMeshRef.current = globe;
-    scene.add(globe);
+    const globeMesh = new THREE.Mesh(earthGeo, earthMat);
+    globeGroup.add(globeMesh);
 
-    // Atmospheric Glow
+    // 2. Draped 3D Vector Coastlines & Country Boundaries from Natural Earth shapefiles
+    const drapedBoundaries = createDrapedCoastlineMesh(EARTH_GRAPHIC_R);
+    globeGroup.add(drapedBoundaries);
+
+    // 3. Atmospheric Glow Layer
     const atmoGeo = new THREE.SphereGeometry(EARTH_GRAPHIC_R * 1.026, 48, 48);
     const atmoMat = new THREE.MeshBasicMaterial({
       color: 0x4aa6ff,
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.15,
       side: THREE.BackSide,
     });
     const atmoMesh = new THREE.Mesh(atmoGeo, atmoMat);
-    scene.add(atmoMesh);
+    globeGroup.add(atmoMesh);
 
-    // Polar Rotational Z-Axis Group
+    // =========================================================================
+    // INERTIAL REFERENCE FRAMES (Stationary in ECI frame)
+    // =========================================================================
+    // Polar Rotational Z-Axis
     const polarGroup = new THREE.Group();
     const zPts = [new THREE.Vector3(0, -6.8, 0), new THREE.Vector3(0, 6.8, 0)];
     const zGeo = new THREE.BufferGeometry().setFromPoints(zPts);
@@ -592,11 +540,11 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     scene.add(orbitArc);
 
     // Procedural Satellite Group
-    const sat = createProceduralSatellite();
+    const sat = buildSatelliteMesh();
     satMeshRef.current = sat;
     scene.add(sat);
 
-    // Resize Observer
+    // Resize Handler
     const handleResize = () => {
       if (!container || !camera || !renderer) return;
       camera.aspect = container.clientWidth / container.clientHeight;
@@ -605,30 +553,47 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // Initial Geometry Setup
+    // Initial Orbital Setup
     updateOrbitalGeometry();
+    updateSatelliteAndArc(currentNuRef.current);
 
-    // Animation Render Loop
+    // =========================================================================
+    // MAIN 60 FPS ANIMATION LOOP
+    // =========================================================================
     let animFrameId: number;
-    const renderLoop = () => {
+    let lastUiSyncTime = 0;
+
+    const renderLoop = (time: number) => {
       animFrameId = requestAnimationFrame(renderLoop);
 
-      // Rotate Earth slowly on its axis
-      if (globeMeshRef.current) {
-        globeMeshRef.current.rotation.y += 0.0006;
+      // 1. Visibly and continuously rotate Earth around its polar axis
+      if (isEarthSpinningRef.current && globeGroupRef.current) {
+        // Smooth rotation rate (~0.003 rad/frame is ~10 deg/sec)
+        globeGroupRef.current.rotation.y += 0.003;
       }
 
-      // Propagate satellite motion along true anomaly when animated
+      // 2. High-speed, responsive satellite propagation
       if (isAnimatingRef.current) {
-        const nextNu = (elementsRef.current.nu + 0.65) % 360;
-        onNuChangeRef.current(nextNu);
+        // Base step is 2.2 deg/frame (yielding brisk ~2.7s period at 1x)
+        const baseSpeed = 2.2;
+        const deltaNu = baseSpeed * animSpeedMultiplierRef.current;
+        currentNuRef.current = (currentNuRef.current + deltaNu) % 360;
+
+        // Update 3D satellite position and arc directly on the GPU
+        updateSatelliteAndArc(currentNuRef.current);
+
+        // Throttle UI synchronization to 10Hz to prevent React state thrashing
+        if (time - lastUiSyncTime > 100) {
+          lastUiSyncTime = time;
+          onNuChangeRef.current(Math.round(currentNuRef.current));
+        }
       }
 
       controls.update();
       renderer.render(scene, camera);
     };
 
-    renderLoop();
+    animFrameId = requestAnimationFrame(renderLoop);
 
     // Cleanup on unmount
     return () => {
@@ -640,7 +605,7 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
         container.removeChild(renderer.domElement);
       }
     };
-  }, [createProceduralSatellite, updateOrbitalGeometry]);
+  }, []); // Run ONCE on mount!
 
   return (
     <div className="relative w-full h-full overflow-hidden select-none" ref={mountRef}>
@@ -652,8 +617,8 @@ export const OrbitalCanvas: React.FC<OrbitalCanvasProps> = ({
             transform: `translate(${hudLabel.x + 14}px, ${hudLabel.y - 12}px)`,
           }}
         >
-          <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#38efef]" />
-          <span className="text-[11px] font-mono font-bold tracking-wider text-cyan-200 bg-slate-900/80 px-2 py-0.5 rounded border border-cyan-500/30">
+          <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#38efef]" />
+          <span className="text-[11px] font-mono font-bold tracking-wider text-cyan-200 bg-slate-900/85 px-2.5 py-0.5 rounded border border-cyan-500/40 shadow-lg">
             {hudLabel.text}
           </span>
         </div>
